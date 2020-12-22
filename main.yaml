@@ -1,0 +1,189 @@
+---
+
+# I deploy https://github.com/s-archer/autows201b with Terraform, before deploying this playbook.
+
+- name: MY ACME PLAYBOOK
+  hosts: bigip
+  connection: local
+  gather_facts: false
+
+  vars:
+    # Decide if you want to use Lets Encrypt production or staging servers to get your cert (stage is best for testing)
+    use_staging: false
+    # Update remaining variables.  For cn, I suggest using wildcard DNS matching the VS public IP e.g. my.name.18.130.10.18.nip.io
+    cn: XXXXXXXX
+    bigip_user: XXXXXXXX
+    bigip_pass: XXXXXXXX
+    bigip_ip: XXXXXXXX
+  
+  # vars_prompt:
+  #   - name: cn
+  #     prompt: "enter the certificate CN"
+  #     private: no
+  #   - name: bigip_user
+  #     prompt: "enter the bigip username"
+  #     private: no
+  #   - name: bigip_pass
+  #     prompt: "enter the bigip password"
+  #   - name: bigip_ip
+  #     prompt: "enter the bigip IP address"
+  #     private: no
+  
+  tasks:
+
+  - name: DEPLOY STARTING AS3 DECLARATION HTTP ONLY 
+    uri:
+      url: "https://{{ bigip_ip }}/mgmt/shared/appsvcs/declare"
+      user: "{{ bigip_user }}"
+      password: "{{ bigip_pass }}"
+      method: POST
+      body: "{{ lookup('template','as3_start_with_http.tpl') }}"
+      force_basic_auth: yes
+      status_code: 
+        - 200
+        - 204
+      body_format: json
+      validate_certs: no
+    register: as3_response
+    retries: 1
+    delay: 20
+    until: ('status' in as3_response and (as3_response.status == 200 or as3_response.status == 204 ))
+
+
+  - name: PAUSE TO CHECK HTTP WORKS
+    pause:
+      prompt: "Test the HTTP version of the NGINX app http://{{cn}}"
+
+
+  - name: GENERATE PRIVATE SSL KEY FOR LETS ENCRYPT ACCOUNT CREATE (SECURITY RISK)
+    openssl_privatekey:
+      path: ./letsencrypt_account.pem.key
+      size: 2048
+
+
+  - name: SET LETS ENCRYPT SERVER TO STAGING OR PRODUCTION
+    set_fact:
+      acme_directory: "{{ 'https://acme-staging-v02.api.letsencrypt.org/directory' if (use_staging == 'true') else 'https://acme-v02.api.letsencrypt.org/directory' }}"
+
+
+  - name: CREATE OR VERIFY LETS ENCRYPT ACCOUNT AND AGREE TOS.
+    acme_account:
+      acme_version: 2
+      acme_directory: "{{ acme_directory }}"
+      account_key_src: ./letsencrypt_account.pem.key
+      state: present
+      terms_agreed: yes
+      contact:
+      - mailto:arch@f5demo.com
+    register: letsencrypt_account
+
+
+  - name: DEBUG OUT THE ACCOUNT INFO (SECURITY RISK)
+    debug:
+      msg: "{{ letsencrypt_account }}"
+
+
+  - name: GENERATE PRIVATE SSL KEY FOR APP CSR (SECURITY RISK)
+    openssl_privatekey:
+      path: "./{{ cn }}.pem.key"
+      size: 2048
+
+
+  - name: GENERATE APP CSR FROM PRIVATE SSL KEY
+    openssl_csr:
+      path: "./{{ cn }}.pem.csr"
+      privatekey_path: "./{{ cn }}.pem.key"
+      country_name: GB
+      organization_name: f5
+      email_address: arch@f5demo.com
+      common_name: "{{ cn }}"
+
+
+  - name: REQUEST LETS ENCRYPT CHALLENGE FOR THE APP CSR
+    acme_certificate:
+      account_key_src: ./letsencrypt_account.pem.key
+      csr: "./{{ cn }}.pem.csr"
+      dest: "./{{ cn }}.pem.crt"
+      fullchain_dest: "./{{ cn }}.pem.fullchain.crt"
+      acme_version: 2
+      acme_directory: "{{ acme_directory }}"
+      challenge: http-01
+    register: letsencrypt_challenge
+
+
+  # - name: DEBUG OUT THE LETS ENCRYPT CHALLENGE COMPLETE (SECURITY RISK)
+  #   debug:
+  #     msg: "{{ letsencrypt_challenge }}"
+
+
+  - name: SET FACT CHALLENGE STRING BY QUERYING JSON (cn IS ANSIBLE VAR)
+    set_fact:
+      challenge_data: "{{ letsencrypt_challenge | json_query('challenge_data.\"' + cn + '\".\"http-01\".resource_value')}}"
+
+
+  - name: DEBUG OUT THE LETS ENCRYPT CHALLENGE COMPLETE (SECURITY RISK)
+    debug:
+      msg: "{{ challenge_data }}"
+
+
+  # - name: PAUSE WHILE I PUT NEW CHALLENGE IN IRULE
+  #   pause:
+  #     prompt: "Make the challenge data available to LetsEncrypt"
+
+
+  - name: DEPLOY AS3 DECLARATION WITH CHALLENGE IRULE
+    uri:
+      url: "https://{{ bigip_ip }}/mgmt/shared/appsvcs/declare"
+      user: "{{ bigip_user }}"
+      password: "{{ bigip_pass }}"
+      method: POST
+      body: "{{ lookup('template','as3_with_challenge_irule.tpl') }}"
+      force_basic_auth: yes
+      status_code: 
+        - 200
+        - 204
+      body_format: json
+      validate_certs: no
+    register: as3_response
+    retries: 1
+    delay: 20
+    until: ('status' in as3_response and (as3_response.status == 200 or as3_response.status == 204 ))
+
+
+  - name: VALIDATE CHALLENGE AND GET CERTS
+    acme_certificate:
+      account_key_src: ./letsencrypt_account.pem.key
+      csr: "./{{ cn }}.pem.csr"
+      dest: "./{{ cn }}.pem.crt"
+      fullchain_dest: "./{{ cn }}.pem.fullchain.crt"
+      acme_version: 2
+      acme_directory: "{{ acme_directory }}"
+      challenge: http-01
+      data: "{{ letsencrypt_challenge }}"
+    when: letsencrypt_challenge is changed
+
+
+  - name: DEPLOY FINAL AS3 DECLARATION WITH SSL ENABLED
+    uri:
+      url: "https://{{ bigip_ip }}/mgmt/shared/appsvcs/declare"
+      user: "{{ bigip_user }}"
+      password: "{{ bigip_pass }}"
+      method: POST
+      body: "{{ lookup('template','as3_final_with_ssl.tpl') }}"
+      force_basic_auth: yes
+      status_code: 
+        - 200
+        - 204
+      body_format: json
+      validate_certs: no
+    register: as3_response
+    retries: 1
+    delay: 20
+    until: ('status' in as3_response and (as3_response.status == 200 or as3_response.status == 204 ))
+
+
+  - name: DEBUG OUT THE HTTPS LINK TO TEST 
+    debug:
+      msg: "Lets Encrypt Completet.  Test the HTTPS version of the NGINX app here: https://{{cn}}"
+
+...
