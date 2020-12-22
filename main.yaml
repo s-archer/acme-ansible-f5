@@ -8,7 +8,7 @@
   gather_facts: false
 
   vars:
-    # Decide if you want to use Lets Encrypt production or staging servers to get your cert (stage is best for testing)
+    # Decide if you want to use Let's Encrypt production or staging servers to get your cert (stage is best for testing)
     use_staging: false
     # Update remaining variables.  For cn, I suggest using wildcard DNS matching the VS public IP e.g. my.name.18.130.10.18.nip.io
     cn: XXXXXXXX
@@ -55,18 +55,18 @@
       prompt: "Test the HTTP version of the NGINX app http://{{cn}}"
 
 
-  - name: GENERATE PRIVATE SSL KEY FOR LETS ENCRYPT ACCOUNT CREATE (SECURITY RISK)
+  - name: GENERATE PRIVATE SSL KEY FOR LET'S ENCRYPT ACCOUNT CREATE (SECURITY RISK)
     openssl_privatekey:
       path: ./letsencrypt_account.pem.key
       size: 2048
 
 
-  - name: SET LETS ENCRYPT SERVER TO STAGING OR PRODUCTION
+  - name: SET LET'S ENCRYPT SERVER TO STAGING OR PRODUCTION
     set_fact:
       acme_directory: "{{ 'https://acme-staging-v02.api.letsencrypt.org/directory' if (use_staging == 'true') else 'https://acme-v02.api.letsencrypt.org/directory' }}"
 
 
-  - name: CREATE OR VERIFY LETS ENCRYPT ACCOUNT AND AGREE TOS.
+  - name: CREATE OR VERIFY LET'S ENCRYPT ACCOUNT AND AGREE TOS.
     acme_account:
       acme_version: 2
       acme_directory: "{{ acme_directory }}"
@@ -99,7 +99,7 @@
       common_name: "{{ cn }}"
 
 
-  - name: REQUEST LETS ENCRYPT CHALLENGE FOR THE APP CSR
+  - name: REQUEST LET'S ENCRYPT CHALLENGE FOR THE APP CSR
     acme_certificate:
       account_key_src: ./letsencrypt_account.pem.key
       csr: "./{{ cn }}.pem.csr"
@@ -111,7 +111,7 @@
     register: letsencrypt_challenge
 
 
-  # - name: DEBUG OUT THE LETS ENCRYPT CHALLENGE COMPLETE (SECURITY RISK)
+  # - name: DEBUG OUT THE LET'S ENCRYPT CHALLENGE COMPLETE (SECURITY RISK)
   #   debug:
   #     msg: "{{ letsencrypt_challenge }}"
 
@@ -121,7 +121,7 @@
       challenge_data: "{{ letsencrypt_challenge | json_query('challenge_data.\"' + cn + '\".\"http-01\".resource_value')}}"
 
 
-  - name: DEBUG OUT THE LETS ENCRYPT CHALLENGE COMPLETE (SECURITY RISK)
+  - name: DEBUG OUT THE LET'S ENCRYPT CHALLENGE COMPLETE (SECURITY RISK)
     debug:
       msg: "{{ challenge_data }}"
 
